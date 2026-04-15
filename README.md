@@ -13,6 +13,7 @@
 | **[docs/ENGINEERING.md](docs/ENGINEERING.md)** | **工程方案依据**：边界、架构、目录、Schema、设计决策、环境变量、版本记录 |
 | [docs/AUTODL.md](docs/AUTODL.md) | AutoDL / Linux 部署与批量运行 |
 | [docs/LLM_PLUGIN.md](docs/LLM_PLUGIN.md) | 可选 LLM 插件（4zapi / OpenAI 兼容）：`llm ping` / `summarize` / `suggest-issues` |
+| [docs/CHANGELOG.md](docs/CHANGELOG.md) | 版本变更摘要 |
 
 变更流水线或 `lesson_merged.json` 结构时，请**同时**更新 `ENGINEERING.md` 与 `schema/lesson_merged.schema.json`。
 

@@ -183,4 +183,5 @@ WhisperX 与 MinerU 可能依赖不同 **torch** 版本。推荐：
 - [OPERATIONS.md](./OPERATIONS.md) — 操作步骤与命令  
 - [AUTODL.md](./AUTODL.md) — 云端实例上的克隆、venv、批量脚本  
 - [LLM_PLUGIN.md](./LLM_PLUGIN.md) — LLM 子命令与配置  
+- [CHANGELOG.md](./CHANGELOG.md) — 版本变更摘要  
 - 上游项目参考：`video-asset-pipeline`（仅路径/习惯参考，无代码依赖）
