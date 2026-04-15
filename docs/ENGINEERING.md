@@ -87,7 +87,9 @@ JSON Schema 见：
 | `mineru_run.py` | 子进程调用 `mineru`（或 `MINERU_PYTHON -m mineru`）；聚合 `*.md` |
 | `merge.py` | 生成 `lesson_merged.*` |
 | `validate.py` | `jsonschema` + 路径存在性等硬规则；写 `validation_report.json` |
-| `cli.py` | `run` 子命令与 `--skip-*` 断点续跑 |
+| `output_layout.py` | `--replace` 时先写入 `*.ingest-staging.<pid>`，**校验通过后再删除旧目录并整体替换** |
+| `llm/` | 可选 OpenAI 兼容 API（如 4zapi）：`ping` / `summarize` / `suggest-issues` |
+| `cli.py` | `run`（含安全替换）、`llm` 子命令 |
 
 ---
 
@@ -119,6 +121,28 @@ WhisperX 与 MinerU 可能依赖不同 **torch** 版本。推荐：
 - **硬规则**：帧文件存在性、`duration_sec` 符号、可选 `--require-speech` / `--require-visual-text`。
 - **退出码**：校验失败时 CLI 返回 **2**（与「参数/文件错误」区分）。
 
+### 5.6 安全替换旧输出（对齐「先成功后删旧」）
+
+- 若目标输出目录**已存在且非空**，且未指定 `--replace` / `--force-in-place`，`run` **拒绝覆盖**并提示，避免误覆盖。
+- **`--replace`（推荐重跑）**：全程写入同级临时目录 `<stem>.ingest-staging.<pid>`，**仅当**流水线结束且 `validation_report.json` 为 `ok` 时，`shutil.rmtree` 删除旧 `<out_dir>`，再把 staging **整体移入**为 `<out_dir>`。中断或校验失败时**删除 staging**，旧目录保持不变。
+- **`--force-in-place`**：直接在原 `<out_dir>` 写入（与旧版「覆盖写」类似），**中断可能留下半成品**，仅当你明确接受风险时使用。
+
+### 5.7 批量处理（对齐 `video-asset-pipeline` 的 `batch_stage_a.sh` 习惯）
+
+- 脚本：`tools/batch_ingest.sh`。
+- **`BATCH_RECURSE=1`**：递归子目录查找视频。
+- **跳过扫描**：输入树下的 `raw-ingest/`（若存在）、以及位于输入树内的 **`RAW_INGEST_OUTPUT_ROOT`**（避免把产出当输入）。
+- **透传参数**：`"$@"` 原样传给每条 `python -m video_raw_ingest run`（例如 `--replace`、`--whisperx-model large-v3`）。
+- **`BATCH_STOP_ON_FAIL=1`**：任一条失败立即退出；默认记录 `FAIL` 并继续下一条，最后若有失败则**非零退出**。
+- 每条子进程设置 **`RAW_INGEST_INPUT_ROOT=<扫描根>`**，以便单课输出镜像相对子路径。
+
+### 5.8 可选 LLM 插件（4zapi 等 OpenAI 兼容端）
+
+- **不参与** ASR/抽帧/MinerU 主链路；用于连接自检、对 `lesson_merged.json` 生成**摘要**或**质量提示**，便于人工或下游快速浏览。
+- 配置与 `video-asset-pipeline` 阶段 B 一致：`.env` 中 **`OPENAI_API_KEY`**、**`OPENAI_API_BASE`**（第三方聚合如 4Z 填 `https://4zapi.com/v1`）、**`OPENAI_CHAT_MODEL`**。
+- 额外加载：`RAW_INGEST_DOTENV`、`--env-file`；仓库根定位优先 **`RAW_INGEST_REPO_ROOT`**，否则若 **cwd** 下存在 `.env` 则用 cwd（详见 `llm/env_loader.py`）。
+- 子命令见 [LLM_PLUGIN.md](./LLM_PLUGIN.md)。
+
 ---
 
 ## 6. 环境变量一览
@@ -133,6 +157,9 @@ WhisperX 与 MinerU 可能依赖不同 **torch** 版本。推荐：
 | `MINERU_BIN` | MinerU 可执行文件路径 |
 | `MINERU_PYTHON` | 用于 `python -m mineru` 的解释器 |
 | `MINERU_BACKEND` | 传给 MinerU 的 `-b`（可被 CLI `--mineru-backend` 覆盖） |
+| `OPENAI_API_KEY` / `OPENAI_API_BASE` / `OPENAI_CHAT_MODEL` | 可选 LLM 插件（见 §5.8、[LLM_PLUGIN.md](./LLM_PLUGIN.md)） |
+| `RAW_INGEST_DOTENV` | 在仓库 `.env` 之后再加载的额外 env 文件 |
+| `RAW_INGEST_REPO_ROOT` | 显式指定仓库根（查找 `.env`）；一般可省略 |
 
 ---
 
@@ -141,6 +168,7 @@ WhisperX 与 MinerU 可能依赖不同 **torch** 版本。推荐：
 | 版本 | 说明 |
 |------|------|
 | 0.1.0 | 首版：run 流水线、Schema、硬校验、AutoDL 文档 |
+| 0.2.0 | `--replace` / `--force-in-place`；批量脚本对齐 stage_a；可选 LLM 插件与 `.env.example` |
 
 **维护约定**：修改 `merged` 结构或默认行为时，请：
 
@@ -152,5 +180,7 @@ WhisperX 与 MinerU 可能依赖不同 **torch** 版本。推荐：
 
 ## 8. 相关文档
 
+- [OPERATIONS.md](./OPERATIONS.md) — 操作步骤与命令  
 - [AUTODL.md](./AUTODL.md) — 云端实例上的克隆、venv、批量脚本  
+- [LLM_PLUGIN.md](./LLM_PLUGIN.md) — LLM 子命令与配置  
 - 上游项目参考：`video-asset-pipeline`（仅路径/习惯参考，无代码依赖）

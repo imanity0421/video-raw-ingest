@@ -12,6 +12,7 @@
 | **[docs/OPERATIONS.md](docs/OPERATIONS.md)** | **操作手册**：从环境安装到单文件/批量命令、产出与排障 |
 | **[docs/ENGINEERING.md](docs/ENGINEERING.md)** | **工程方案依据**：边界、架构、目录、Schema、设计决策、环境变量、版本记录 |
 | [docs/AUTODL.md](docs/AUTODL.md) | AutoDL / Linux 部署与批量运行 |
+| [docs/LLM_PLUGIN.md](docs/LLM_PLUGIN.md) | 可选 LLM 插件（4zapi / OpenAI 兼容）：`llm ping` / `summarize` / `suggest-issues` |
 
 变更流水线或 `lesson_merged.json` 结构时，请**同时**更新 `ENGINEERING.md` 与 `schema/lesson_merged.schema.json`。
 
@@ -22,6 +23,7 @@
 - NVIDIA GPU + CUDA（推荐，用于 WhisperX 与 MinerU）
 - 依赖：`pip install -e .`（见 `pyproject.toml`）
 - **MinerU** 请按 [MinerU 官方文档](https://github.com/opendatalab/MinerU) 单独安装
+- **可选 LLM**：复制 **`.env.example`** 为 **`.env`**，配置 `OPENAI_API_KEY` 与 **4zapi** 的 `OPENAI_API_BASE`（见 [docs/LLM_PLUGIN.md](docs/LLM_PLUGIN.md)）
 
 ```bash
 export HF_ENDPOINT=https://hf-mirror.com   # 可选，国内加速模型下载
@@ -50,6 +52,10 @@ python -m video_raw_ingest run lesson.mp4 -o out --skip-whisperx --skip-slides
 ```
 
 更多参数：`python -m video_raw_ingest run --help`
+
+重跑且输出目录非空时，使用 **`--replace`**（先写 staging，校验通过后再替换旧目录）或 **`--force-in-place`**（原地覆盖），见 [OPERATIONS.md](docs/OPERATIONS.md)。
+
+可选 LLM：`python -m video_raw_ingest llm ping`（需 `.env`）。
 
 ## 输出物（摘要）
 

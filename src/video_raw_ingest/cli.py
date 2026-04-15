@@ -1,10 +1,11 @@
-"""命令行入口：run 子命令跑完整流水线（至结构合并 + 校验）。"""
+"""命令行入口：run（完整流水线）、llm（可选 OpenAI 兼容插件）。"""
 
 from __future__ import annotations
 
 import argparse
 import json
 import os
+import shutil
 import sys
 from pathlib import Path
 from typing import Any
@@ -19,6 +20,7 @@ from .ffmpeg_util import (
 )
 from .merge import build_merged, write_merged_json, write_merged_markdown
 from .mineru_run import run_mineru_all_keyframes
+from .output_layout import promote_staging_to_final, resolve_work_dir
 from .paths import default_output_dir_for_video
 from .slide_extract import extract_keyframes
 from .validate import validate_merged, write_validation_report
@@ -38,23 +40,16 @@ def _load_json(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def cmd_run(args: argparse.Namespace) -> int:
-    video = Path(args.video).resolve()
-    if not video.is_file():
-        print(f"找不到视频文件: {video}", file=sys.stderr)
-        return 1
-
-    out_dir = (
-        Path(args.out_dir).resolve()
-        if args.out_dir
-        else default_output_dir_for_video(video)
-    )
-    out_dir.mkdir(parents=True, exist_ok=True)
-
+def _run_pipeline(
+    *,
+    video: Path,
+    out_dir: Path,
+    args: argparse.Namespace,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """执行 run 的核心步骤，向 out_dir 写入。返回 (merged, report)。"""
     ffmpeg = which_binary("ffmpeg")
     if not ffmpeg:
-        print("未找到 ffmpeg", file=sys.stderr)
-        return 1
+        raise RuntimeError("未找到 ffmpeg")
 
     probe = run_ffprobe(video)
     duration_sec = format_duration_sec(probe)
@@ -67,16 +62,12 @@ def cmd_run(args: argparse.Namespace) -> int:
     slides_dir = out_dir / "slides"
     frames_dir = slides_dir / "frames"
 
-    # 1) 音频
     if not args.skip_audio:
         print(f"[1/5] 抽取 WAV -> {wav}", flush=True)
         extract_wav_16k_mono(video, wav, ffmpeg)
     elif not wav.is_file():
-        print("缺少 _work/audio_16k.wav 且指定了 --skip-audio", file=sys.stderr)
-        return 1
+        raise FileNotFoundError("缺少 _work/audio_16k.wav 且指定了 --skip-audio")
 
-    # 2) WhisperX
-    speech: dict[str, Any]
     if not args.skip_whisperx:
         print("[2/5] WhisperX 转写...", flush=True)
         lang = None if str(args.language).lower() == "auto" else args.language
@@ -91,12 +82,9 @@ def cmd_run(args: argparse.Namespace) -> int:
     else:
         seg_path = whisper_dir / "segments.json"
         if not seg_path.is_file():
-            print("缺少 whisperx/segments.json 且指定了 --skip-whisperx", file=sys.stderr)
-            return 1
+            raise FileNotFoundError("缺少 whisperx/segments.json 且指定了 --skip-whisperx")
         speech = _load_json(seg_path)
 
-    # 3) 抽帧
-    keyframes_raw: list[dict[str, Any]]
     if not args.skip_slides:
         print("[3/5] 抽取关键帧...", flush=True)
         _records, _meta = extract_keyframes(
@@ -113,14 +101,11 @@ def cmd_run(args: argparse.Namespace) -> int:
     else:
         kpath = slides_dir / "keyframes.json"
         if not kpath.is_file():
-            print("缺少 slides/keyframes.json 且指定了 --skip-slides", file=sys.stderr)
-            return 1
+            raise FileNotFoundError("缺少 slides/keyframes.json 且指定了 --skip-slides")
         keyframes_data = _load_json(kpath)
         keyframes_raw = keyframes_data.get("keyframes") or []
 
-    # 4) MinerU
     slides_json = slides_dir / "slides.json"
-    slides: list[dict[str, Any]]
     if not args.skip_mineru:
         print("[4/5] MinerU 解析画面（可能较久）...", flush=True)
         backend = args.mineru_backend or (os.environ.get("MINERU_BACKEND") or None)
@@ -140,11 +125,9 @@ def cmd_run(args: argparse.Namespace) -> int:
         )
     else:
         if not slides_json.is_file():
-            print("缺少 slides/slides.json 且指定了 --skip-mineru", file=sys.stderr)
-            return 1
+            raise FileNotFoundError("缺少 slides/slides.json 且指定了 --skip-mineru")
         slides = json.loads(slides_json.read_text(encoding="utf-8"))
 
-    # 5) 合并 + 校验
     print("[5/5] 结构合并与校验...", flush=True)
     merged = build_merged(
         video_path=video,
@@ -164,24 +147,127 @@ def cmd_run(args: argparse.Namespace) -> int:
         require_visual_text=args.require_visual_text,
     )
     write_validation_report(report, out_dir / "validation_report.json")
+    return merged, report
+
+
+def cmd_run(args: argparse.Namespace) -> int:
+    video = Path(args.video).resolve()
+    if not video.is_file():
+        print(f"找不到视频文件: {video}", file=sys.stderr)
+        return 1
+
+    final_out = (
+        Path(args.out_dir).resolve()
+        if args.out_dir
+        else default_output_dir_for_video(video)
+    )
+
+    if args.replace and args.force_in_place:
+        print("不能同时使用 --replace 与 --force-in-place", file=sys.stderr)
+        return 1
+
+    staging_path: Path | None = None
+    work_out: Path
+
+    try:
+        work_out, staging_path = resolve_work_dir(
+            final_out,
+            replace=args.replace,
+            force_in_place=args.force_in_place,
+        )
+    except FileExistsError as e:
+        print(str(e), file=sys.stderr)
+        return 1
+
+    try:
+        merged, report = _run_pipeline(video=video, out_dir=work_out, args=args)
+    except Exception as e:
+        if staging_path is not None and staging_path.exists():
+            shutil.rmtree(staging_path, ignore_errors=True)
+        print(f"处理失败: {e}", file=sys.stderr)
+        return 1
 
     if report.get("status") != "ok":
+        if staging_path is not None and staging_path.exists():
+            shutil.rmtree(staging_path, ignore_errors=True)
         print("校验失败:", file=sys.stderr)
-        for e in report.get("errors") or []:
-            print(f"  - {e}", file=sys.stderr)
+        for err in report.get("errors") or []:
+            print(f"  - {err}", file=sys.stderr)
         return 2
 
     for w in report.get("warnings") or []:
         print(f"警告: {w}", file=sys.stderr)
 
-    print(f"完成。输出目录: {out_dir}")
+    if staging_path is not None:
+        try:
+            promote_staging_to_final(final_out, staging_path)
+        except OSError as e:
+            print(f"替换输出目录失败: {e}", file=sys.stderr)
+            return 1
+
+    print(f"完成。输出目录: {final_out}")
     return 0
+
+
+def cmd_llm(args: argparse.Namespace) -> int:
+    from .llm import plugin as llm_plugin
+    from .llm.env_loader import load_env_files, resolve_repo_root
+
+    repo = resolve_repo_root()
+    load_env_files(repo, args.env_file)
+
+    cmd = args.llm_cmd
+    if cmd == "ping":
+        ok, msg = llm_plugin.ping(args.model or None)
+        print(msg, flush=True)
+        return 0 if ok else 2
+
+    if cmd == "summarize":
+        lesson = Path(args.lesson_dir).resolve()
+        if not lesson.is_dir():
+            print(f"目录不存在: {lesson}", file=sys.stderr)
+            return 1
+        try:
+            text = llm_plugin.summarize_lesson(lesson, model_override=args.model or None)
+        except Exception as e:
+            print(f"失败: {e}", file=sys.stderr)
+            return 1
+        out = (
+            Path(args.output).resolve()
+            if args.output
+            else lesson / "llm_summary.md"
+        )
+        out.write_text(text, encoding="utf-8")
+        print(f"已写入: {out}", flush=True)
+        return 0
+
+    if cmd == "suggest-issues":
+        lesson = Path(args.lesson_dir).resolve()
+        if not lesson.is_dir():
+            print(f"目录不存在: {lesson}", file=sys.stderr)
+            return 1
+        try:
+            text = llm_plugin.suggest_issues(lesson, model_override=args.model or None)
+        except Exception as e:
+            print(f"失败: {e}", file=sys.stderr)
+            return 1
+        out = (
+            Path(args.output).resolve()
+            if args.output
+            else lesson / "llm_quality_hints.md"
+        )
+        out.write_text(text, encoding="utf-8")
+        print(f"已写入: {out}", flush=True)
+        return 0
+
+    print(f"未知 llm 子命令: {cmd}", file=sys.stderr)
+    return 1
 
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="video-raw-ingest",
-        description="课程视频原始内容获取（至结构合并，不含 data-juicer）",
+        description="课程视频原始内容获取（至结构合并，不含 data-juicer）；可选 LLM 插件",
     )
     p.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
 
@@ -196,12 +282,31 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="输出目录；默认见 RAW_INGEST_OUTPUT_ROOT / autodl-tmp/raw-ingest",
     )
+    run_p.add_argument(
+        "--replace",
+        action="store_true",
+        help="输出目录已存在时：先写入临时 staging，校验通过后再删除旧目录并替换（推荐）",
+    )
+    run_p.add_argument(
+        "--force-in-place",
+        action="store_true",
+        help="输出目录已存在时：直接在原目录覆盖（中断可能留下半成品；与 --replace 互斥）",
+    )
     run_p.add_argument("--skip-audio", action="store_true", help="跳过抽 WAV（需已存在）")
     run_p.add_argument("--skip-whisperx", action="store_true")
     run_p.add_argument("--skip-slides", action="store_true")
     run_p.add_argument("--skip-mineru", action="store_true")
-    run_p.add_argument("--skip-merge", action="store_true", help="仍写校验报告但跳过写 lesson_merged.*")
-    run_p.add_argument("--similarity", type=float, default=0.6, help="关键帧相似度阈值（越低越敏感）")
+    run_p.add_argument(
+        "--skip-merge",
+        action="store_true",
+        help="仍写校验报告但跳过写 lesson_merged.*",
+    )
+    run_p.add_argument(
+        "--similarity",
+        type=float,
+        default=0.6,
+        help="关键帧相似度阈值（越低越敏感）",
+    )
     run_p.add_argument("--max-frames", type=int, default=None, help="最多保留关键帧数")
     run_p.add_argument("--whisperx-model", default="large-v2", help="WhisperX 模型名")
     run_p.add_argument(
@@ -211,7 +316,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="WhisperX / 对齐所用设备",
     )
     run_p.add_argument("--batch-size", type=int, default=16)
-    run_p.add_argument("--language", default="zh", help="WhisperX 语言提示，如 zh / en")
+    run_p.add_argument("--language", default="zh", help="WhisperX 语言提示，如 zh / en / auto")
     run_p.add_argument(
         "--mineru-backend",
         default=None,
@@ -239,6 +344,55 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     run_p.set_defaults(func=cmd_run)
+
+    llm_p = sub.add_parser(
+        "llm",
+        help="可选 LLM 插件（OpenAI 兼容 API，如 4zapi）：连接自检、摘要、质检提示",
+    )
+    llm_sub = llm_p.add_subparsers(dest="llm_cmd", required=True)
+
+    ping_p = llm_sub.add_parser("ping", help="测试 API 连接（不打印密钥）")
+    ping_p.add_argument("--model", default=None, help="覆盖模型 ID")
+    ping_p.add_argument(
+        "--env-file",
+        type=Path,
+        default=None,
+        help="额外 .env 路径（后加载覆盖）",
+    )
+    ping_p.set_defaults(func=cmd_llm)
+
+    sum_p = llm_sub.add_parser(
+        "summarize",
+        help="读取 lesson_merged.json，生成中文摘要 llm_summary.md",
+    )
+    sum_p.add_argument("lesson_dir", type=Path, help="含 lesson_merged.json 的目录")
+    sum_p.add_argument(
+        "-o",
+        "--output",
+        type=Path,
+        default=None,
+        help="输出 Markdown 路径（默认 <lesson_dir>/llm_summary.md）",
+    )
+    sum_p.add_argument("--model", default=None, help="覆盖模型 ID")
+    sum_p.add_argument("--env-file", type=Path, default=None)
+    sum_p.set_defaults(func=cmd_llm)
+
+    iss_p = llm_sub.add_parser(
+        "suggest-issues",
+        help="根据合并 JSON 列出可能的数据质量问题（抽检辅助）",
+    )
+    iss_p.add_argument("lesson_dir", type=Path)
+    iss_p.add_argument(
+        "-o",
+        "--output",
+        type=Path,
+        default=None,
+        help="默认 <lesson_dir>/llm_quality_hints.md",
+    )
+    iss_p.add_argument("--model", default=None)
+    iss_p.add_argument("--env-file", type=Path, default=None)
+    iss_p.set_defaults(func=cmd_llm)
+
     return p
 
 

@@ -72,7 +72,10 @@ export RAW_INGEST_BATCH_INPUT=/root/autodl-tmp/课程合集
 ./tools/batch_ingest.sh
 ```
 
-脚本对目录内 `*.mp4` / `*.mkv` / `*.mov` 逐条调用 `run`（可按需编辑脚本增加递归）。
+- 默认只扫描**当前一层**；**递归**：`BATCH_RECURSE=1 ./tools/batch_ingest.sh /root/autodl-tmp/根`  
+- **透传参数**（如 `--replace`）：`./tools/batch_ingest.sh /path --replace`  
+- 不扫描输入树内的 **`raw-ingest/`** 及位于输入下的 **`RAW_INGEST_OUTPUT_ROOT`**（与 `video-asset-pipeline` 的 batch 逻辑一致）  
+- 详见 [ENGINEERING.md §5.7](./ENGINEERING.md) 与 [OPERATIONS.md §5](./OPERATIONS.md)
 
 ---
 

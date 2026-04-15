@@ -10,6 +10,7 @@ build/
 .ruff_cache/
 .idea/
 .vscode/
+.env
 *.log
 output/
 data/

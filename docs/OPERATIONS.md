@@ -64,11 +64,22 @@ python -m video_raw_ingest run /root/autodl-tmp/课程/第01讲.mp4
 ```
 
 - **不指定 `-o`**：若存在 `/root/autodl-tmp`，默认输出到 **`/root/autodl-tmp/raw-ingest/<镜像子路径>/<视频主文件名>/`**（与 `RAW_INGEST_INPUT_ROOT` 配合可镜像目录结构，见 [ENGINEERING.md](./ENGINEERING.md) §6）。
+- **重跑且目录里已有旧结果**：二选一  
+  - **`--replace`**（推荐）：先写入临时 staging，**校验通过后再整体替换**旧目录；中断不会先删掉旧结果。  
+  - **`--force-in-place`**：原地覆盖，中断可能留下半成品。  
+  - 若输出目录**已非空**且两者都不加，命令会**拒绝运行**（防误覆盖）。
 - **指定输出目录**：
 
 ```bash
 python -m video_raw_ingest run /root/autodl-tmp/课程/第01讲.mp4 \
   -o /root/autodl-tmp/raw-ingest/课程/第01讲
+```
+
+带安全替换的重跑示例：
+
+```bash
+python -m video_raw_ingest run /root/autodl-tmp/课程/第01讲.mp4 \
+  -o /root/autodl-tmp/raw-ingest/课程/第01讲 --replace
 ```
 
 **成功标准**：终端无报错；同目录下 **`validation_report.json`** 中 `"status": "ok"`；主交付物 **`lesson_merged.json`** 存在。
@@ -100,7 +111,9 @@ python -m video_raw_ingest run --help
 
 ## 5. 批量处理
 
-**同一目录下多个视频**（仅当前一层，扩展名 mp4/mkv/mov）：
+脚本：**`tools/batch_ingest.sh`**（行为对齐 `video-asset-pipeline` 的 `batch_stage_a.sh`：递归、跳过产出目录、透传参数）。
+
+**同一目录下多个视频**（默认仅当前一层）：
 
 ```bash
 export RAW_INGEST_BATCH_INPUT=/root/autodl-tmp/课程合集
@@ -108,6 +121,29 @@ export RAW_INGEST_BATCH_INPUT=/root/autodl-tmp/课程合集
 # 或
 ./tools/batch_ingest.sh /root/autodl-tmp/课程合集
 ```
+
+**递归子目录**、并统一带 **安全替换**（示例）：
+
+```bash
+BATCH_RECURSE=1 ./tools/batch_ingest.sh /root/autodl-tmp/课程根 --replace
+```
+
+**遇错即停**（可选）：`BATCH_STOP_ON_FAIL=1 ./tools/batch_ingest.sh ...`
+
+详见 [ENGINEERING.md §5.7](./ENGINEERING.md)。
+
+---
+
+## 5.1 可选 LLM（4zapi 等）
+
+在 **`run` 成功产出 `lesson_merged.json` 后**，可按需配置 `.env` 并执行：
+
+```bash
+python -m video_raw_ingest llm ping
+python -m video_raw_ingest llm summarize /path/to/lesson_out_dir
+```
+
+说明见 [LLM_PLUGIN.md](./LLM_PLUGIN.md)。
 
 ---
 
