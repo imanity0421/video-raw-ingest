@@ -56,6 +56,8 @@ python -m video_raw_ingest run lesson.mp4 -o out --skip-whisperx --skip-slides
 
 重跑且输出目录非空时，使用 **`--replace`**（先写 staging，校验通过后再替换旧目录）或 **`--force-in-place`**（原地覆盖），见 [OPERATIONS.md](docs/OPERATIONS.md)。
 
+默认 **`--keyframe-commit tail`**（静止后再保存，接近完整页）。若需「一变就截」可用 **`--keyframe-commit immediate`**。
+
 可选 LLM：`python -m video_raw_ingest llm ping`（需 `.env`）。
 
 ## 输出物（摘要）

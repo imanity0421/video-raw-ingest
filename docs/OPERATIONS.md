@@ -99,6 +99,8 @@ python -m video_raw_ingest run --help
 | 参数 | 含义 |
 |------|------|
 | `--similarity 0.6` | 关键帧灵敏度（越低越容易切出新页） |
+| `--keyframe-commit` | 默认 **`tail`**（尾帧）；`immediate` 为「一变就截」 |
+| `--keyframe-min-stable-seconds 2` | `tail`：连续稳定秒数（与 `--keyframe-inter-stability` 配合） |
 | `--max-frames N` | 最多保留 N 张关键帧 |
 | `--whisperx-model large-v2` | WhisperX 模型名 |
 | `--device cuda` / `cpu` | 推理设备 |

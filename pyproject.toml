@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "video-raw-ingest"
-version = "0.2.0"
+version = "0.2.2"
 description = "课程视频原始内容获取：WhisperX + 关键帧 + MinerU，输出结构合并 JSON/Markdown（至清洗前）"
 readme = "README.md"
 license = { text = "MIT" }

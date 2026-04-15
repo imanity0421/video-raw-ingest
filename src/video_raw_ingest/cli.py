@@ -94,6 +94,10 @@ def _run_pipeline(
             max_frames=args.max_frames,
             fps_hint=fps,
             duration_sec=duration_sec,
+            commit_mode=args.keyframe_commit,
+            inter_frame_stability=args.keyframe_inter_stability,
+            min_stable_seconds=args.keyframe_min_stable_seconds,
+            max_transition_sec=args.keyframe_max_transition_sec,
         )
         kpath = slides_dir / "keyframes.json"
         keyframes_data = _load_json(kpath)
@@ -306,6 +310,31 @@ def build_parser() -> argparse.ArgumentParser:
         type=float,
         default=0.6,
         help="关键帧相似度阈值（越低越敏感）",
+    )
+    run_p.add_argument(
+        "--keyframe-commit",
+        choices=["immediate", "tail"],
+        default="tail",
+        help="tail（默认）=检测到相对上一关键帧大变后，等画面静止再保存，接近完整 PPT；"
+        "immediate=相似度首次低于阈值即保存（偏早，适合硬切/无需等尾帧）",
+    )
+    run_p.add_argument(
+        "--keyframe-inter-stability",
+        type=float,
+        default=0.93,
+        help="tail 模式：相邻两次采样相似度 ≥ 该值视为画面稳定（0~1）",
+    )
+    run_p.add_argument(
+        "--keyframe-min-stable-seconds",
+        type=int,
+        default=2,
+        help="tail 模式：连续稳定达到该秒数才落盘",
+    )
+    run_p.add_argument(
+        "--keyframe-max-transition-sec",
+        type=float,
+        default=90.0,
+        help="tail 模式：单页过渡超过该时长则强制落盘",
     )
     run_p.add_argument("--max-frames", type=int, default=None, help="最多保留关键帧数")
     run_p.add_argument("--whisperx-model", default="large-v2", help="WhisperX 模型名")

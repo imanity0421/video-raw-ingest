@@ -82,7 +82,7 @@ JSON Schema 见：
 |------|------|
 | `paths.py` | `RAW_INGEST_*` 环境变量与输出镜像规则（对齐 `video-asset-pipeline` 的 AutoDL 习惯） |
 | `ffmpeg_util.py` | `ffprobe`、时长、视频 FPS 近似、`ffmpeg` 抽 WAV |
-| `slide_extract.py` | 每秒采样 + BGR 直方图相关度；输出 `slides/frames` 与 `keyframes.json`；**VFR 下时间戳为近似** |
+| `slide_extract.py` | 每秒采样 + BGR 直方图相关度；默认 **`tail`（尾帧）**；可选 `immediate`（首变帧）；见 `--keyframe-commit` |
 | `whisperx_run.py` | WhisperX 转写 + 对齐；无语音段时跳过 align |
 | `mineru_run.py` | 子进程调用 `mineru`（或 `MINERU_PYTHON -m mineru`）；聚合 `*.md` |
 | `merge.py` | 生成 `lesson_merged.*` |
@@ -94,6 +94,11 @@ JSON Schema 见：
 ---
 
 ## 5. 关键设计决策（维护时需知）
+
+### 5.1a 关键帧提交：`tail`（默认）与 `immediate`
+
+- **`tail`（默认）**：检测到相对上一关键帧「开始大变」后**先不落盘**，用**最新采样**作候选；当**连续若干秒**内「与上一秒采样」足够相似（画面已静止）时再保存，更接近**整页出完后的尾帧**。参数：`--keyframe-inter-stability`、`--keyframe-min-stable-seconds`、`--keyframe-max-transition-sec`。
+- **`immediate`**：当前采样帧与**上一张已保存关键帧**的相似度 **首次** 低于阈值时**立刻**保存。对**逐段渐显**的 PPT 往往偏早（未出全）；适合硬切、或明确要省时间、不等静止的场景。
 
 ### 5.1 为何内置抽帧而非直接调用 `evp`
 
@@ -169,6 +174,8 @@ WhisperX 与 MinerU 可能依赖不同 **torch** 版本。推荐：
 |------|------|
 | 0.1.0 | 首版：run 流水线、Schema、硬校验、AutoDL 文档 |
 | 0.2.0 | `--replace` / `--force-in-place`；批量脚本对齐 stage_a；可选 LLM 插件与 `.env.example` |
+| 0.2.1 | `--keyframe-commit tail`：渐显 PPT 用尾帧（静止后再保存） |
+| 0.2.2 | **默认** `keyframe-commit=tail`；`immediate` 需显式指定 |
 
 **维护约定**：修改 `merged` 结构或默认行为时，请：
 
